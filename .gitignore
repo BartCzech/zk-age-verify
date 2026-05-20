@@ -1,0 +1,5 @@
+zk/keys/*.key
+zk/keys/*.r1cs
+zk/keys/vk_embedded.go
+chain/ageverify.db/
+*.log

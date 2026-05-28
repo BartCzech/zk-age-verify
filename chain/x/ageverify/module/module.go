@@ -1,17 +1,18 @@
 package module
 
 import (
-	"context"
 	"encoding/json"
 
+	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
+
+	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
-	gwruntime "github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/spf13/cobra"
-	grpc "google.golang.org/grpc"
 
+	"ageverify/x/ageverify/client/cli"
 	"ageverify/x/ageverify/keeper"
 	"ageverify/x/ageverify/types"
 )
@@ -21,7 +22,7 @@ var (
 	_ module.AppModule      = AppModule{}
 )
 
-// AppModuleBasic implements the module.AppModuleBasic interface.
+// AppModuleBasic handles codec registration and CLI commands.
 type AppModuleBasic struct{}
 
 func (AppModuleBasic) Name() string { return types.ModuleName }
@@ -35,21 +36,20 @@ func (AppModuleBasic) RegisterInterfaces(reg codectypes.InterfaceRegistry) {
 }
 
 func (AppModuleBasic) DefaultGenesis(cdc codec.JSONCodec) json.RawMessage {
-	return cdc.MustMarshalJSON(&types.GenesisState{})
+	return cdc.MustMarshalJSON(types.NewGenesisState())
 }
 
-func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, _ interface{}, bz json.RawMessage) error {
+func (AppModuleBasic) ValidateGenesis(cdc codec.JSONCodec, _ client.TxEncodingConfig, bz json.RawMessage) error {
 	var gs types.GenesisState
 	return cdc.UnmarshalJSON(bz, &gs)
 }
 
-func (AppModuleBasic) RegisterGRPCGatewayRoutes(_ context.Context, _ *gwruntime.ServeMux) {}
+func (AppModuleBasic) RegisterGRPCGatewayRoutes(_ client.Context, _ *gwruntime.ServeMux) {}
 
-func (AppModuleBasic) GetTxCmd() *cobra.Command { return nil }
+func (AppModuleBasic) GetTxCmd() *cobra.Command  { return cli.GetTxCmd() }
+func (AppModuleBasic) GetQueryCmd() *cobra.Command { return cli.GetQueryCmd() }
 
-func (AppModuleBasic) GetQueryCmd() *cobra.Command { return nil }
-
-// AppModule implements the full module.AppModule interface.
+// AppModule is the full module implementation.
 type AppModule struct {
 	AppModuleBasic
 	keeper keeper.Keeper
@@ -60,8 +60,9 @@ func NewAppModule(keeper keeper.Keeper) AppModule {
 }
 
 func (am AppModule) RegisterServices(cfg module.Configurator) {
-	types.RegisterMsgServer(cfg.MsgServer().(grpc.ServiceRegistrar), keeper.NewMsgServerImpl(am.keeper))
-	types.RegisterQueryServer(cfg.QueryServer().(grpc.ServiceRegistrar), am.keeper)
+	// cfg.MsgServer() already returns grpc.ServiceRegistrar — no cast needed
+	types.RegisterMsgServer(cfg.MsgServer(), keeper.NewMsgServerImpl(am.keeper))
+	types.RegisterQueryServer(cfg.QueryServer(), am.keeper)
 }
 
 func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) {
@@ -70,12 +71,9 @@ func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.
 }
 
 func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.RawMessage {
-	gs := types.GenesisState{}
-	return cdc.MustMarshalJSON(&gs)
+	return cdc.MustMarshalJSON(types.NewGenesisState())
 }
 
 func (AppModule) ConsensusVersion() uint64 { return 1 }
-
-func (AppModule) IsOnePerModuleType() {}
-
-func (AppModule) IsAppModule() {}
+func (AppModule) IsOnePerModuleType()       {}
+func (AppModule) IsAppModule()              {}

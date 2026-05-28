@@ -6,18 +6,16 @@ import (
 	"os"
 	"path/filepath"
 
-	authcodec "cosmossdk.io/x/auth/codec"
-
 	dbm "github.com/cosmos/cosmos-db"
-	"github.com/spf13/cast"
 
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
-	txsigning "cosmossdk.io/x/tx/signing"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	authcodec "github.com/cosmos/cosmos-sdk/x/auth/codec"
+
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
@@ -43,7 +41,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/staking"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	"google.golang.org/protobuf/reflect/protoreflect"
 
 	ageverifykeeper "ageverify/x/ageverify/keeper"
 	ageverifymodule "ageverify/x/ageverify/module"
@@ -108,31 +105,13 @@ func NewApp(
 	appCodec := codec.NewProtoCodec(interfaceRegistry)
 	legacyAmino := codec.NewLegacyAmino()
 
-	// Register all interfaces (standard modules + custom)
 	ModuleBasics.RegisterInterfaces(interfaceRegistry)
 	ModuleBasics.RegisterLegacyAminoCodec(legacyAmino)
 
-	// Build TxConfig with custom signer for MsgSubmitAgeProof.
-	// Because we hand-wrote the proto types (no protoc), the default signer
-	// resolver can't find the 'creator' field via file descriptor. We register
-	// a custom resolver here so the chain knows who signed each tx.
-	txConfig, err := authtx.NewTxConfigWithOptions(appCodec, authtx.ConfigOptions{
-		SigningOptions: &txsigning.Options{
-			CustomGetSigners: map[protoreflect.FullName]txsigning.GetSignersFunc{
-				"ageverify.ageverify.MsgSubmitAgeProof": func(msg interface{}) ([][]byte, error) {
-					m := msg.(*ageverifytypes.MsgSubmitAgeProof)
-					addr, err := sdk.AccAddressFromBech32(m.Creator)
-					if err != nil {
-						return nil, err
-					}
-					return [][]byte{addr}, nil
-				},
-			},
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
+	// DefaultSignModes = DIRECT + AMINO_JSON. The demo always passes
+	// --sign-mode amino-json because MsgSubmitAgeProof was written by
+	// hand (no protoc), so SIGN_MODE_DIRECT signer resolution won't work.
+	txConfig := authtx.NewTxConfig(appCodec, authtx.DefaultSignModes)
 
 	bApp := baseapp.NewBaseApp(Name, logger, db, txConfig.TxDecoder(), baseAppOptions...)
 	bApp.SetCommitMultiStoreTracer(traceStore)
@@ -255,7 +234,6 @@ func NewApp(
 
 	app.MountKVStores(keys)
 	app.MountTransientStores(tkeys)
-
 	app.SetInitChainer(app.InitChainer)
 	app.SetBeginBlocker(app.BeginBlocker)
 	app.SetEndBlocker(app.EndBlocker)
@@ -265,7 +243,6 @@ func NewApp(
 			panic(err)
 		}
 	}
-
 	return app
 }
 
@@ -312,29 +289,25 @@ func (app *App) ExportAppStateAndValidators(forZeroHeight bool, jailAllowedAddrs
 	}, nil
 }
 
-func (app *App) RegisterAPIRoutes(apiSvr *api.Server, _ config.APIConfig) {}
+func (app *App) RegisterAPIRoutes(_ *api.Server, _ config.APIConfig) {}
 
 func (app *App) DefaultGenesis() map[string]json.RawMessage {
 	return app.mm.DefaultGenesis(app.cdc)
 }
 
-func (app *App) AppCodec() codec.Codec                         { return app.cdc }
-func (app *App) LegacyAmino() *codec.LegacyAmino               { return app.legacyAmino }
+func (app *App) AppCodec() codec.Codec                          { return app.cdc }
+func (app *App) LegacyAmino() *codec.LegacyAmino                { return app.legacyAmino }
 func (app *App) InterfaceRegistry() codectypes.InterfaceRegistry { return app.interfaceRegistry }
-func (app *App) TxConfig() sdk.TxConfig                        { return app.txConfig }
-func (app *App) GetKey(storeKey string) *storetypes.KVStoreKey  { return app.keys[storeKey] }
+func (app *App) TxConfig() sdk.TxConfig                         { return app.txConfig }
+func (app *App) GetKey(storeKey string) *storetypes.KVStoreKey   { return app.keys[storeKey] }
+func (app *App) GetStakingKeeper() *stakingkeeper.Keeper         { return app.StakingKeeper }
 
-// Needed by genutil
-func (app *App) GetStakingKeeper() *stakingkeeper.Keeper { return app.StakingKeeper }
-
-// maccPerms defines module accounts and their permissions.
 var maccPerms = map[string][]string{
 	authtypes.FeeCollectorName:     nil,
 	stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staker},
 	stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staker},
 }
 
-// BlockedAddresses returns module accounts that must not receive user funds.
 func BlockedAddresses() map[string]bool {
 	blocked := make(map[string]bool)
 	for acc := range maccPerms {
@@ -342,6 +315,3 @@ func BlockedAddresses() map[string]bool {
 	}
 	return blocked
 }
-
-// Satisfy unused import
-var _ = cast.ToString

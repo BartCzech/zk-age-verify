@@ -10,7 +10,7 @@ require (
 	cosmossdk.io/log v1.4.1
 	cosmossdk.io/store v1.1.1
 	github.com/consensys/gnark v0.14.0
-	github.com/consensys/gnark-crypto v0.19.0
+	github.com/consensys/gnark-crypto v0.20.0
 	github.com/cosmos/cosmos-db v1.0.2
 	github.com/cosmos/cosmos-sdk v0.50.10
 	github.com/cosmos/gogoproto v1.7.0

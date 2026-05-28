@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
+	abci "github.com/cometbft/cometbft/abci/types"
 	dbm "github.com/cosmos/cosmos-db"
 
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	authcodec "github.com/cosmos/cosmos-sdk/x/auth/codec"
@@ -76,7 +78,8 @@ type App struct {
 	cdc               *codec.ProtoCodec
 	legacyAmino       *codec.LegacyAmino
 	interfaceRegistry codectypes.InterfaceRegistry
-	txConfig          sdk.TxConfig
+	// client.TxConfig, not sdk.TxConfig — TxConfig lives in the client package in SDK v0.50
+	txConfig client.TxConfig
 
 	keys  map[string]*storetypes.KVStoreKey
 	tkeys map[string]*storetypes.TransientStoreKey
@@ -119,15 +122,19 @@ func NewApp(
 	bApp.SetInterfaceRegistry(interfaceRegistry)
 	bApp.SetTxEncoder(txConfig.TxEncoder())
 
-	tkeys := sdk.NewTransientStoreKeys(paramstypes.TStoreKey)
-	keys := sdk.NewKVStoreKeys(
-		authtypes.StoreKey,
-		banktypes.StoreKey,
-		stakingtypes.StoreKey,
-		paramstypes.StoreKey,
-		consensustypes.StoreKey,
-		ageverifytypes.StoreKey,
-	)
+	// sdk.NewKVStoreKeys was removed from the sdk package in v0.50 — create
+	// the maps directly using storetypes so no helper wrapper is needed.
+	tkeys := map[string]*storetypes.TransientStoreKey{
+		paramstypes.TStoreKey: storetypes.NewTransientStoreKey(paramstypes.TStoreKey),
+	}
+	keys := map[string]*storetypes.KVStoreKey{
+		authtypes.StoreKey:      storetypes.NewKVStoreKey(authtypes.StoreKey),
+		banktypes.StoreKey:      storetypes.NewKVStoreKey(banktypes.StoreKey),
+		stakingtypes.StoreKey:   storetypes.NewKVStoreKey(stakingtypes.StoreKey),
+		paramstypes.StoreKey:    storetypes.NewKVStoreKey(paramstypes.StoreKey),
+		consensustypes.StoreKey: storetypes.NewKVStoreKey(consensustypes.StoreKey),
+		ageverifytypes.StoreKey: storetypes.NewKVStoreKey(ageverifytypes.StoreKey),
+	}
 
 	app := &App{
 		BaseApp:           bApp,
@@ -187,8 +194,10 @@ func NewApp(
 		logger,
 	)
 
+	// genutil.NewAppModule takes 4 args in SDK v0.50 — the MessageValidator
+	// lives in AppModuleBasic (ModuleBasics above), not in AppModule.
 	app.mm = module.NewManager(
-		genutil.NewAppModule(app.AccountKeeper, app.StakingKeeper, app.BaseApp, txConfig, genutiltypes.DefaultMessageValidator),
+		genutil.NewAppModule(app.AccountKeeper, app.StakingKeeper, app.BaseApp, txConfig),
 		auth.NewAppModule(appCodec, app.AccountKeeper, nil, app.GetSubspace(authtypes.ModuleName)),
 		bank.NewAppModule(appCodec, app.BankKeeper, app.AccountKeeper, app.GetSubspace(banktypes.ModuleName)),
 		staking.NewAppModule(appCodec, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, app.GetSubspace(stakingtypes.ModuleName)),
@@ -259,7 +268,9 @@ func (app *App) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
 	return app.mm.EndBlock(ctx)
 }
 
-func (app *App) InitChainer(ctx sdk.Context, req *sdk.InitChainRequest) (*sdk.InitChainResponse, error) {
+// InitChainer uses *abci.RequestInitChain / *abci.ResponseInitChain from
+// cometbft — sdk.InitChainRequest/Response don't exist in SDK v0.50.
+func (app *App) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
 	var gs map[string]json.RawMessage
 	if err := json.Unmarshal(req.AppStateBytes, &gs); err != nil {
 		panic(err)
@@ -291,6 +302,9 @@ func (app *App) ExportAppStateAndValidators(forZeroHeight bool, jailAllowedAddrs
 
 func (app *App) RegisterAPIRoutes(_ *api.Server, _ config.APIConfig) {}
 
+// RegisterNodeService is required by servertypes.Application in SDK v0.50.
+func (app *App) RegisterNodeService(_ client.Context, _ config.Config) {}
+
 func (app *App) DefaultGenesis() map[string]json.RawMessage {
 	return app.mm.DefaultGenesis(app.cdc)
 }
@@ -298,14 +312,16 @@ func (app *App) DefaultGenesis() map[string]json.RawMessage {
 func (app *App) AppCodec() codec.Codec                          { return app.cdc }
 func (app *App) LegacyAmino() *codec.LegacyAmino                { return app.legacyAmino }
 func (app *App) InterfaceRegistry() codectypes.InterfaceRegistry { return app.interfaceRegistry }
-func (app *App) TxConfig() sdk.TxConfig                         { return app.txConfig }
+// TxConfig returns client.TxConfig — sdk.TxConfig does not exist in SDK v0.50.
+func (app *App) TxConfig() client.TxConfig                       { return app.txConfig }
 func (app *App) GetKey(storeKey string) *storetypes.KVStoreKey   { return app.keys[storeKey] }
 func (app *App) GetStakingKeeper() *stakingkeeper.Keeper         { return app.StakingKeeper }
 
+// authtypes.Staking (not authtypes.Staker) is the correct constant in SDK v0.50.
 var maccPerms = map[string][]string{
 	authtypes.FeeCollectorName:     nil,
-	stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staker},
-	stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staker},
+	stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
+	stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
 }
 
 func BlockedAddresses() map[string]bool {

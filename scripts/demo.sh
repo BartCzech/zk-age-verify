@@ -34,8 +34,8 @@ command -v ageverifyd >/dev/null 2>&1 \
     || fail "ageverifyd not in PATH. Build with: cd chain && ignite chain build"
 command -v jq >/dev/null 2>&1 \
     || fail "jq not found. Install with: apt install jq"
-ageverifyd status --node "$NODE" >/dev/null 2>&1 \
-    || fail "Chain not running at $NODE. Start with: ignite chain serve"
+curl -sf "http://localhost:26657/status" >/dev/null 2>&1 \
+    || fail "Chain not running at $NODE. Start with: ageverifyd start"
 
 ok "ageverifyd found, chain is live"
 
@@ -82,10 +82,10 @@ ok "Tx broadcast accepted"
 echo "  Waiting for block inclusion..."
 sleep 4
 
-# confirm on-chain
-CONFIRM=$(ageverifyd query tx "$TX_HASH" --node "$NODE" --output json 2>/dev/null || echo '{"code":99}')
-CONFIRM_CODE=$(echo "$CONFIRM" | jq -r '.code // 0')
-[ "$CONFIRM_CODE" = "0" ] || fail "Tx failed on-chain (code $CONFIRM_CODE)"
+# confirm on-chain via raw CometBFT RPC (avoids cosmos.tx.v1beta1.Tx codec issue)
+CONFIRM=$(curl -sf "http://localhost:26657/tx?hash=0x${TX_HASH}" 2>/dev/null || echo '{}')
+CONFIRM_CODE=$(echo "$CONFIRM" | jq -r '.result.tx_result.code // 99')
+[ "$CONFIRM_CODE" = "0" ] || fail "Tx failed on-chain (code $CONFIRM_CODE): $(echo "$CONFIRM" | jq -r '.result.tx_result.log // ""')"
 ok "Tx included in block"
 
 # ============================================================
@@ -125,7 +125,16 @@ REJECT_OUT=$(ageverifyd tx ageverify submit-age-proof \
     --yes \
     --output json 2>&1) || true   # don't abort on non-zero exit
 
-REJECT_CODE=$(echo "$REJECT_OUT" | jq -r '.code // 0')
+REJECT_HASH=$(echo "$REJECT_OUT" | jq -r '.txhash // ""')
+
+# Wait for on-chain execution result (sync mode only confirms mempool acceptance)
+REJECT_CODE=0
+if [ -n "$REJECT_HASH" ]; then
+    sleep 4
+    REJECT_RESULT=$(curl -sf "http://localhost:26657/tx?hash=0x${REJECT_HASH}" 2>/dev/null || echo '{}')
+    REJECT_CODE=$(echo "$REJECT_RESULT" | jq -r '.result.tx_result.code // 0')
+fi
+
 echo "  rejection code: $REJECT_CODE (expected non-zero)"
 [ "$REJECT_CODE" != "0" ] \
     || fail "Chain accepted invalid proof — something is wrong with the verifier!"

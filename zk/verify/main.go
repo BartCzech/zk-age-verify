@@ -21,6 +21,9 @@ type ProofInput struct {
 //
 //	go run zk/prover/main.go --year 2000 --month 6 --day 15 | go run zk/verify/main.go
 //	go run zk/verify/main.go < proof.json
+//
+// NOTE: zk/keys/verification.key must match the key embedded in the chain node.
+// Re-run zk/setup/main.go and restart the chain if you regenerate the keys.
 func main() {
 	// ---- Read JSON from stdin ----
 	var input ProofInput
@@ -80,5 +83,4 @@ func main() {
 	}
 
 	fmt.Fprintln(os.Stderr, "VERIFICATION PASSED — proof is valid.")
-	fmt.Fprintln(os.Stderr, "The chain should accept this proof during integration (O5).")
 }

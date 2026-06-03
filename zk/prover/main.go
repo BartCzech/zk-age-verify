@@ -13,6 +13,8 @@ import (
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+	gnarklogger "github.com/consensys/gnark/logger"
+	"github.com/rs/zerolog"
 
 	"zk-age-verify/zk/circuit"
 )
@@ -28,13 +30,16 @@ type ProofOutput struct {
 
 // Run from repo root: go run zk/prover/main.go --year 2000 --month 6 --day 15
 func main() {
-	year := flag.Int("year", 0, "Birth year (e.g. 2000)")
-	month := flag.Int("month", 0, "Birth month (1-12)")
-	day := flag.Int("day", 0, "Birth day (1-31)")
+	year   := flag.Int("year", 0, "Birth year (e.g. 2000)")
+	month  := flag.Int("month", 0, "Birth month (1-12)")
+	day    := flag.Int("day", 0, "Birth day (1-31)")
+	minAge := flag.Int("min-age", 18, "Minimum age required (default 18)")
 	flag.Parse()
 
+	gnarklogger.Set(zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"}).With().Timestamp().Logger())
+
 	if *year == 0 || *month == 0 || *day == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: go run zk/prover/main.go --year YYYY --month MM --day DD")
+		fmt.Fprintln(os.Stderr, "Usage: go run zk/prover/main.go --year YYYY --month MM --day DD [--min-age N]")
 		fmt.Fprintln(os.Stderr, "Example: go run zk/prover/main.go --year 2000 --month 6 --day 15")
 		os.Exit(1)
 	}
@@ -50,7 +55,7 @@ func main() {
 		CurrentYear:  now.Year(),
 		CurrentMonth: int(now.Month()),
 		CurrentDay:   now.Day(),
-		MinAge:       18,
+		MinAge:       *minAge,
 	}
 
 	// ---- Step 2: Compile circuit ----

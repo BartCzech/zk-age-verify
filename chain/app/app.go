@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 
 	"cosmossdk.io/log"
@@ -17,6 +18,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	authcodec "github.com/cosmos/cosmos-sdk/x/auth/codec"
+	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
+
+	"github.com/cosmos/gogoproto/proto"
+	"cosmossdk.io/x/tx/signing"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
 	"github.com/cosmos/cosmos-sdk/server/api"
@@ -104,16 +109,23 @@ func NewApp(
 	appOpts servertypes.AppOptions,
 	baseAppOptions ...func(*baseapp.BaseApp),
 ) *App {
-	interfaceRegistry := codectypes.NewInterfaceRegistry()
+	interfaceRegistry, err := codectypes.NewInterfaceRegistryWithOptions(codectypes.InterfaceRegistryOptions{
+		ProtoFiles: proto.HybridResolver,
+		SigningOptions: signing.Options{
+			AddressCodec:          authcodec.NewBech32Codec(sdk.Bech32PrefixAccAddr),
+			ValidatorAddressCodec: authcodec.NewBech32Codec(sdk.Bech32PrefixValAddr),
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
 	appCodec := codec.NewProtoCodec(interfaceRegistry)
 	legacyAmino := codec.NewLegacyAmino()
 
 	ModuleBasics.RegisterInterfaces(interfaceRegistry)
+	cryptocodec.RegisterInterfaces(interfaceRegistry)
 	ModuleBasics.RegisterLegacyAminoCodec(legacyAmino)
 
-	// DefaultSignModes = DIRECT + AMINO_JSON. The demo always passes
-	// --sign-mode amino-json because MsgSubmitAgeProof was written by
-	// hand (no protoc), so SIGN_MODE_DIRECT signer resolution won't work.
 	txConfig := authtx.NewTxConfig(appCodec, authtx.DefaultSignModes)
 
 	bApp := baseapp.NewBaseApp(Name, logger, db, txConfig.TxDecoder(), baseAppOptions...)
@@ -232,6 +244,7 @@ func NewApp(
 		authtypes.ModuleName,
 		banktypes.ModuleName,
 		stakingtypes.ModuleName,
+		genutiltypes.ModuleName,
 		consensustypes.ModuleName,
 		ageverifytypes.ModuleName,
 	)
@@ -275,11 +288,20 @@ func (app *App) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.
 	if err := json.Unmarshal(req.AppStateBytes, &gs); err != nil {
 		panic(err)
 	}
-	return app.mm.InitGenesis(ctx, app.cdc, gs)
+	resp, err := app.mm.InitGenesis(ctx, app.cdc, gs)
+	if err != nil {
+		return nil, err
+	}
+	// Cosmos SDK / IAVL bug: an IAVL store that is completely empty (no keys
+	// ever written) cannot serve CacheMultiStoreWithVersion queries because
+	// GetRoot returns ErrVersionDoesNotExist for every version.  Writing a
+	// single sentinel byte to each such store at genesis prevents this.
+	ctx.KVStore(app.keys[paramstypes.StoreKey]).Set([]byte("initialized"), []byte{1})
+	return resp, nil
 }
 
 func (app *App) ExportAppStateAndValidators(forZeroHeight bool, jailAllowedAddrs []string, modulesToExport []string) (servertypes.ExportedApp, error) {
-	ctx := app.NewContextLegacy(true, sdk.Header{Height: app.LastBlockHeight()})
+	ctx := app.NewContextLegacy(true, cmtproto.Header{Height: app.LastBlockHeight()})
 	gs, err := app.mm.ExportGenesis(ctx, app.cdc)
 	if err != nil {
 		return servertypes.ExportedApp{}, err
@@ -302,11 +324,15 @@ func (app *App) ExportAppStateAndValidators(forZeroHeight bool, jailAllowedAddrs
 
 func (app *App) RegisterAPIRoutes(_ *api.Server, _ config.APIConfig) {}
 
+func (app *App) RegisterTendermintService(_ client.Context) {}
+
+func (app *App) RegisterTxService(_ client.Context) {}
+
 // RegisterNodeService is required by servertypes.Application in SDK v0.50.
 func (app *App) RegisterNodeService(_ client.Context, _ config.Config) {}
 
 func (app *App) DefaultGenesis() map[string]json.RawMessage {
-	return app.mm.DefaultGenesis(app.cdc)
+	return ModuleBasics.DefaultGenesis(app.cdc)
 }
 
 func (app *App) AppCodec() codec.Codec                          { return app.cdc }

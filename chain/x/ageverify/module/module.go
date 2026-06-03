@@ -68,6 +68,10 @@ func (am AppModule) RegisterServices(cfg module.Configurator) {
 func (am AppModule) InitGenesis(ctx sdk.Context, cdc codec.JSONCodec, data json.RawMessage) {
 	var gs types.GenesisState
 	cdc.MustUnmarshalJSON(data, &gs)
+	// Write an init marker so the IAVL store is never left empty from genesis.
+	// An empty IAVL store triggers a bug where CacheMultiStoreWithVersion fails
+	// on any query because GetRoot returns ErrVersionDoesNotExist.
+	am.keeper.SetInitialized(ctx)
 }
 
 func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.RawMessage {

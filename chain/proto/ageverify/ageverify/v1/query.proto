@@ -1,0 +1,17 @@
+syntax = "proto3";
+package ageverify.ageverify;
+
+option go_package = "ageverify/x/ageverify/types";
+
+message QueryVerificationStatusRequest {
+  string address = 1;
+}
+
+message QueryVerificationStatusResponse {
+  bool   verified    = 1;
+  string verified_at = 2;
+}
+
+service Query {
+  rpc VerificationStatus(QueryVerificationStatusRequest) returns (QueryVerificationStatusResponse);
+}

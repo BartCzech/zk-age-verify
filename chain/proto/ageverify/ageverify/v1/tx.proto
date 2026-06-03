@@ -1,0 +1,24 @@
+syntax = "proto3";
+package ageverify.ageverify;
+
+import "cosmos/msg/v1/msg.proto";
+
+option go_package = "ageverify/x/ageverify/types";
+
+// MsgSubmitAgeProof is submitted by a user to prove they are >= 18
+// without revealing their date of birth.
+message MsgSubmitAgeProof {
+  option (cosmos.msg.v1.signer) = "creator";
+
+  string creator        = 1;
+  string proof          = 2;
+  string public_witness = 3;
+  string current_date   = 4;
+}
+
+// MsgSubmitAgeProofResponse is empty — the event carries the result.
+message MsgSubmitAgeProofResponse {}
+
+service Msg {
+  rpc SubmitAgeProof(MsgSubmitAgeProof) returns (MsgSubmitAgeProofResponse);
+}

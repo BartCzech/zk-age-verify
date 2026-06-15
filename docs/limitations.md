@@ -4,6 +4,41 @@ This document covers known weaknesses of the current implementation and how they
 
 ---
 
+## 0. Public Inputs Must Be Chosen by the Verifier, Not the Prover (FIXED)
+
+**What:** A Groth16 proof only attests "I know private inputs such that the
+circuit is satisfied **for these public inputs**." The public inputs of this
+circuit are `MinAge` and `CurrentYear/Month/Day`. An earlier version of the
+chain verified the proof against a public witness taken directly from the
+transaction (`msg.PublicWitness`), which means the prover chose those values.
+
+**Why it mattered:** Since every user holds the proving key (client-side
+proving is the whole point), anyone could run a modified prover and:
+- set `MinAge = 0`, making "age ≥ 0" trivially true for any real birth date; or
+- set `CurrentYear = 2200`, inflating the computed age so even an infant clears
+  the threshold.
+
+Both produce **cryptographically valid** proofs. The chain would store
+`verified: true`. No cryptography is broken — the proof simply proves a
+statement that was never the one the application cared about. Critically, this
+bypass survives the mitigation in limitation #1: even with a trusted-issuer
+signature binding the birth date, a real minor could still pass by manipulating
+the public inputs.
+
+**Fix (implemented):** The chain no longer trusts `msg.PublicWitness`. In
+`keeper.BuildPublicWitness` it reconstructs the public witness from values it
+controls:
+- `MinAge` is hardcoded to `requiredMinAge = 18` in the message handler;
+- `CurrentYear/Month/Day` come from `msg.CurrentDate`, which is itself bounded
+  to `ctx.BlockTime()` (see #4).
+
+The prover therefore has no freedom over the public inputs, and the proof now
+genuinely attests "age ≥ 18 as of approximately now." `msg.PublicWitness` is
+ignored. The general rule: **a verifier must construct the public inputs it
+wants to check; accepting them from the prover makes the statement vacuous.**
+
+---
+
 ## 1. No Trusted Issuer — User Can Lie About Birth Date
 
 **What:** The circuit proves "given this birth date, the person is ≥ 18." It does not prove the birth date is correct. A user can input any birth date they want.
@@ -38,9 +73,9 @@ This document covers known weaknesses of the current implementation and how they
 
 ## 4. Block Time Reliance — Approximate Date Validation
 
-**What:** The chain validates that the proof's `current_date` is within 24 hours of `ctx.BlockTime()`. Block time is set by validators and can drift.
+**What:** `current_date` (from `msg.CurrentDate`) is both validated against `ctx.BlockTime()` (within 24 hours) **and** used to build the public witness the proof is checked against (see #0). So the date the circuit computed against is bound to block time. Block time itself is set by validators and can drift.
 
-**Why it matters:** Validators could theoretically manipulate block time by up to the consensus-allowed drift. A malicious validator majority could accept a proof with a future date (e.g., to make a 17-year-old appear 18 next month). In practice, CometBFT limits block time drift, but the 24-hour tolerance is generous.
+**Why it matters:** Validators could theoretically manipulate block time by up to the consensus-allowed drift. A malicious validator majority could accept a proof with a date up to the tolerance in the future (e.g., to make someone appear older than they are). In practice, CometBFT limits block time drift, but the 24-hour tolerance is generous.
 
 **Production mitigation:** Tighten the tolerance to ±1 hour. Use a time oracle (e.g., Chainlink or IBC-relayed timestamps) for a trustless external time source. Alternatively, pass block height as the public input instead of date, and derive the date from block height via a known genesis block timestamp.
 
@@ -78,6 +113,7 @@ A prover could use month=13 or day=32 without the circuit rejecting it.
 
 | # | Limitation | Impact | Production Fix |
 |---|-----------|--------|----------------|
+| 0 | Prover-chosen public inputs | Bypass with MinAge=0 / future year | **Fixed:** verifier builds the public witness from trusted values |
 | 1 | No trusted issuer | User can lie about birth date | EdDSA signature from eID in circuit |
 | 2 | Single-party setup | Toxic waste holder can forge proofs | MPC ceremony or PLONK |
 | 3 | No address binding | Proof portable to any address | Address as public circuit input |

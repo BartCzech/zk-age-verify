@@ -42,35 +42,39 @@ bash scripts/init-chain.sh
 # 2. Start the node (in background or a second terminal)
 ageverifyd start --minimum-gas-prices 0stake &
 
-# 3. Run the full end-to-end demo
-bash scripts/demo.sh
+# 3. Run the demos
+python3 demo/demo_positive.py    # adult  → verified on-chain
+python3 demo/demo_negative.py    # minor  → every bypass rejected
 ```
 
-The demo takes about 10 seconds and runs five checks (see below).
+## The Demos
 
-## What the Demo Does
+There are two narrated Python demos (`demo/`), each telling a different story
+and printing the blockchain concept at every step. Only the values at the top
+of each file (birth date, account) are meant to be tweaked.
 
-1. **Generates a ZK proof** for birthdate 2000-06-15 (age 25) — birth date never leaves the machine
-2. **Submits the proof** to the chain from alice's account
-3. **Queries on-chain state** → `verified: true` for alice's address
-4. **Sends a fake proof** → chain rejects it (error code 1103)
-5. **Attempts proof for a minor** (born 2011) → local prover refuses
+**`demo/demo_positive.py`** — an adult (born 2000) walks the full lifecycle:
 
-Expected output:
+1. **Connect** to the live chain (height, block time)
+2. **Account** — the bech32 identity signing the tx
+3. **Generate the ZK proof locally** — birth date never leaves the machine
+4. **Sign & broadcast** the transaction
+5. **Wait for block inclusion** — mempool acceptance ≠ finality
+6. **On-chain verification** — every validator re-runs Groth16; `age_verified` event emitted
+7. **Query world state** → `verified: true`
 
-```
-✓  ageverifyd found, chain is live
-✓  Proof generated → /tmp/zk_age_proof.json
-✓  Tx broadcast accepted
-✓  Tx included in block
-✓  Alice is age-verified on-chain ✓
-✓  Chain correctly rejected fake proof (code 1103)
-✓  Prover correctly refused to generate proof for minor
+**`demo/demo_negative.py`** — a minor (born 2015) cannot get verified, even by cheating:
 
-╔══════════════════════════════════════════════╗
-║          DEMO COMPLETE — ALL CHECKS PASSED   ║
-╚══════════════════════════════════════════════╝
-```
+- **N1** Honest attempt → the prover *refuses* (a false statement can't be proven)
+- **N2** Forged `MinAge=0` proof → included in a block but execution **fails** (code `1103`)
+- **N3** Forged future-date proof → rejected (date bound to block time, code `1102`/`1103`)
+- **N4** On-chain state is unchanged → `verified: false` (failed txs don't mutate state)
+
+The key lesson the negative demo makes visible: **a transaction can be included
+in a block and still fail** — validators deterministically reject an invalid
+state transition.
+
+> Note: an older single-file Bash demo still lives at `scripts/demo.sh`.
 
 ## Manual Usage (inside container)
 
@@ -81,6 +85,10 @@ go run zk/prover/main.go --year 2000 --month 6 --day 15 > /tmp/proof.json
 
 # Optionally require a different minimum age (default is 18)
 go run zk/prover/main.go --year 2000 --month 6 --day 15 --min-age 21 > /tmp/proof.json
+
+# Override the "current date" (used by the negative demo to forge a future date)
+go run zk/prover/main.go --year 2000 --month 6 --day 15 \
+    --current-year 2035 --current-month 1 --current-day 1 > /tmp/proof.json
 
 # Submit to chain
 PROOF=$(jq -r .proof   /tmp/proof.json)
@@ -131,7 +139,11 @@ zk-age-verify/
 ├── go.work                           # Go workspace (chain + zk modules)
 ├── scripts/
 │   ├── init-chain.sh                 # bootstrap genesis + accounts
-│   └── demo.sh                       # end-to-end demo (5 checks)
+│   └── demo.sh                       # legacy Bash demo
+├── demo/                             # narrated Python demos
+│   ├── chainlib.py                   # shared orchestration helpers
+│   ├── demo_positive.py             # adult → verified
+│   └── demo_negative.py             # minor → every bypass rejected
 ├── chain/                            # Cosmos SDK chain
 │   ├── app/app.go                    # application wiring
 │   ├── cmd/ageverifyd/               # node binary entrypoint

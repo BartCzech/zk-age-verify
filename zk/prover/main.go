@@ -34,6 +34,12 @@ func main() {
 	month  := flag.Int("month", 0, "Birth month (1-12)")
 	day    := flag.Int("day", 0, "Birth day (1-31)")
 	minAge := flag.Int("min-age", 18, "Minimum age required (default 18)")
+	// The "current date" defaults to today. It can be overridden to forge a
+	// proof against a date other than now — used by the negative demo to show
+	// the chain rejects a proof that claims a future "current" date.
+	curYear  := flag.Int("current-year", 0, "Override current year (default: today)")
+	curMonth := flag.Int("current-month", 0, "Override current month (default: today)")
+	curDay   := flag.Int("current-day", 0, "Override current day (default: today)")
 	flag.Parse()
 
 	gnarklogger.Set(zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"}).With().Timestamp().Logger())
@@ -45,6 +51,16 @@ func main() {
 	}
 
 	now := time.Now()
+	currentYear, currentMonth, currentDay := now.Year(), int(now.Month()), now.Day()
+	if *curYear != 0 {
+		currentYear = *curYear
+	}
+	if *curMonth != 0 {
+		currentMonth = *curMonth
+	}
+	if *curDay != 0 {
+		currentDay = *curDay
+	}
 
 	// ---- Step 1: Build assignment (all circuit inputs) ----
 	fmt.Fprintln(os.Stderr, "Building witness...")
@@ -52,9 +68,9 @@ func main() {
 		BirthYear:    *year,
 		BirthMonth:   *month,
 		BirthDay:     *day,
-		CurrentYear:  now.Year(),
-		CurrentMonth: int(now.Month()),
-		CurrentDay:   now.Day(),
+		CurrentYear:  currentYear,
+		CurrentMonth: currentMonth,
+		CurrentDay:   currentDay,
 		MinAge:       *minAge,
 	}
 
@@ -123,10 +139,13 @@ func main() {
 	}
 
 	// ---- Step 8: JSON to stdout ----
+	// CurrentDate mirrors the date baked into the witness (possibly overridden),
+	// so msg.CurrentDate stays consistent with the public inputs.
+	currentDate := fmt.Sprintf("%04d%02d%02d", currentYear, currentMonth, currentDay)
 	output := ProofOutput{
 		Proof:          base64.StdEncoding.EncodeToString(proofBuf.Bytes()),
 		PublicWitness:  base64.StdEncoding.EncodeToString(witBuf.Bytes()),
-		CurrentDate:    now.Format("20060102"), // Go reference time quirk: Jan 2 2006
+		CurrentDate:    currentDate,
 		CircuitVersion: "age-check-v1",
 	}
 	enc := json.NewEncoder(os.Stdout)

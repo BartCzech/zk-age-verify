@@ -5,3 +5,5 @@ chain/ageverify.db/
 *.log
 
 .idea
+
+demo/__pycache__

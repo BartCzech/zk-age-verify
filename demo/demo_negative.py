@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""
+NEGATIVE demo — a minor (age < 18) cannot get verified, even by cheating.
+
+Shows three things, each a blockchain teaching moment:
+  N1  the honest prover REFUSES   -> ZK can't prove a false statement
+  N2  a forged MinAge=0 proof     -> included in a block but execution FAILS
+  N3  a forged future-date proof  -> rejected (date bound to block time)
+  N4  on-chain state is unchanged -> failed txs don't mutate world state
+
+Run inside the container, from the repo root:
+    python3 demo/demo_negative.py
+"""
+
+import datetime
+
+import chainlib as c
+
+# ====================  TWEAK THESE  ====================
+BIRTH_YEAR  = 2015      # a minor (under 18)
+BIRTH_MONTH = 1
+BIRTH_DAY   = 1
+ACCOUNT     = "bob"
+ATTACK_MIN_AGE   = 0     # bypass attempt #1: lower the bar to 0
+ATTACK_FAKE_YEAR = 2035  # bypass attempt #2: pretend it is the future
+# =======================================================
+
+
+def expect_rejected(label, account, proof_b64, witness_b64, date):
+    """Submit a (crafted) proof and assert the chain rejects it on-chain."""
+    bcast = c.submit_raw(account, proof_b64, witness_b64, date)
+    txhash = bcast.get("txhash", "")
+    if not txhash:
+        c.fail(f"{label}: no txhash returned ({bcast})")
+    c.info("tx hash", txhash)
+    res = c.wait_for_tx(txhash)
+    if res is None:
+        c.fail(f"{label}: tx not committed within timeout")
+    code = str(res.get("code", 0))
+    c.info("block height", res.get("height"))
+    c.info("result code", f"{code}  (non-zero = rejected)")
+    c.info("log", res.get("log", "").split(";")[-1].strip())
+    if code == "0":
+        c.fail(f"{label}: chain ACCEPTED a proof it should have rejected!")
+    c.note("The tx was included in a block (it cost gas, took a slot) but the")
+    c.note("state machine REJECTED it. Inclusion in a block ≠ success.")
+    c.ok(f"{label}: chain rejected the proof (code {code})")
+    return code
+
+
+def main():
+    c.banner("ZK AGE VERIFICATION — NEGATIVE CASE (minor)")
+    c.require_chain_live()
+
+    addr = c.address_of(ACCOUNT)
+    c.info("account", f"{ACCOUNT}  ({addr})")
+    c.info("birth date", f"{BIRTH_YEAR}-{BIRTH_MONTH:02d}-{BIRTH_DAY:02d}  (a minor)")
+
+    # ---- N1: ZK cannot prove a false statement ----
+    c.step("N1", "Honest attempt — prover should refuse")
+    c.note("With the real threshold (MinAge=18) the circuit is unsatisfiable")
+    c.note("for a minor, so no valid proof can even be produced.")
+    try:
+        c.generate_proof(BIRTH_YEAR, BIRTH_MONTH, BIRTH_DAY, min_age=18)
+        c.fail("prover produced a proof for a minor — that should be impossible!")
+    except c.ProofRefused:
+        c.ok("Prover refused — a false statement cannot be proven")
+
+    # ---- N2: forge a weaker statement (MinAge=0) ----
+    c.step("N2", f"Attack #1 — forge a proof with MinAge={ATTACK_MIN_AGE}")
+    c.note(f"The attacker lowers the bar to {ATTACK_MIN_AGE} and gets a mathematically")
+    c.note("VALID proof locally. Then they broadcast it to the chain...")
+    evil = c.generate_proof(BIRTH_YEAR, BIRTH_MONTH, BIRTH_DAY, min_age=ATTACK_MIN_AGE)
+    c.ok("Attacker produced a valid MinAge=0 proof locally")
+    expect_rejected("Attack #1", ACCOUNT,
+                    evil["proof"], evil["public_witness"], evil["current_date"])
+    c.note("The chain rebuilds the witness with MinAge=18, so the proof fails.")
+
+    # ---- N3: forge a future "current date" ----
+    c.step("N3", f"Attack #2 — forge a proof claiming the year is {ATTACK_FAKE_YEAR}")
+    c.note(f"The attacker pretends it is {ATTACK_FAKE_YEAR}, making the minor 'old enough'.")
+    future = c.generate_proof(BIRTH_YEAR, BIRTH_MONTH, BIRTH_DAY,
+                              min_age=18, current=(ATTACK_FAKE_YEAR, 1, 1))
+    c.ok(f"Attacker produced a valid proof claiming year {ATTACK_FAKE_YEAR}")
+
+    c.note("Vector A: submit with the matching future date — caught by the")
+    c.note("block-time check (the date is years away from real block time).")
+    expect_rejected("Attack #2A", ACCOUNT,
+                    future["proof"], future["public_witness"], future["current_date"])
+
+    today = datetime.date.today().strftime("%Y%m%d")
+    c.note("Vector B: submit with TODAY's date — the chain rebuilds the witness")
+    c.note("from today, so the proof (made for the future) fails the pairing.")
+    expect_rejected("Attack #2B", ACCOUNT,
+                    future["proof"], future["public_witness"], today)
+
+    # ---- N4: state is unchanged ----
+    c.step("N4", "Confirm on-chain state was never changed")
+    status = c.query_status(addr)
+    c.info("verified", status.get("verified"))
+    if status.get("verified") in (True, "true"):
+        c.fail("minor is marked verified — the chain was bypassed!")
+    c.note("None of the failed txs mutated world state (atomicity).")
+    c.ok(f"'{ACCOUNT}' is NOT verified — every bypass was rejected")
+
+    c.banner("NEGATIVE DEMO COMPLETE — minor rejected, chain not bypassed")
+
+
+if __name__ == "__main__":
+    main()

@@ -7,6 +7,9 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
 	gnarkwitness "github.com/consensys/gnark/backend/witness"
+	"github.com/consensys/gnark/frontend"
+
+	"zk-age-verify/zk/circuit"
 )
 
 // LoadVerificationKey deserializes VKBytes (from vk_embedded.go) into a
@@ -19,20 +22,37 @@ func LoadVerificationKey() (groth16.VerifyingKey, error) {
 	return vk, nil
 }
 
-// VerifyAgeProof checks a ZK proof against the embedded verification key.
-// Returns nil if valid, error otherwise.
-func VerifyAgeProof(vk groth16.VerifyingKey, proofBytes, witnessBytes []byte) error {
+// BuildPublicWitness constructs the public witness from values the CHAIN
+// controls, not from anything the transaction supplies.
+//
+// This is the security-critical part: groth16.Verify only proves "I know
+// private inputs such that the circuit holds for THESE public inputs". If the
+// public inputs (MinAge, CurrentYear/Month/Day) came from the user, they could
+// set MinAge=0 or CurrentYear=2200 and produce a mathematically valid proof
+// that says nothing about being an adult. By rebuilding the public witness here
+// from a hardcoded MinAge and the block-time-validated date, the prover has no
+// freedom over the public inputs.
+func BuildPublicWitness(currentYear, currentMonth, currentDay, minAge int) (gnarkwitness.Witness, error) {
+	assignment := &circuit.AgeCircuit{
+		CurrentYear:  currentYear,
+		CurrentMonth: currentMonth,
+		CurrentDay:   currentDay,
+		MinAge:       minAge,
+	}
+	w, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField(), frontend.PublicOnly())
+	if err != nil {
+		return nil, fmt.Errorf("cannot build public witness: %w", err)
+	}
+	return w, nil
+}
+
+// VerifyAgeProof checks a ZK proof against the embedded verification key and a
+// public witness the caller must build from trusted values (see
+// BuildPublicWitness). Returns nil if valid, error otherwise.
+func VerifyAgeProof(vk groth16.VerifyingKey, proofBytes []byte, pubWitness gnarkwitness.Witness) error {
 	proof := groth16.NewProof(ecc.BN254)
 	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
 		return fmt.Errorf("cannot deserialize proof: %w", err)
-	}
-
-	pubWitness, err := gnarkwitness.New(ecc.BN254.ScalarField())
-	if err != nil {
-		return fmt.Errorf("cannot create witness: %w", err)
-	}
-	if _, err := pubWitness.ReadFrom(bytes.NewReader(witnessBytes)); err != nil {
-		return fmt.Errorf("cannot deserialize witness: %w", err)
 	}
 
 	if err := groth16.Verify(proof, vk, pubWitness); err != nil {

@@ -16,6 +16,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.0
 	github.com/spf13/cobra v1.8.1
 	google.golang.org/grpc v1.64.1
+	zk-age-verify/zk v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -170,3 +171,5 @@ require (
 
 // cometbft v1.x removed proto/tendermint packages — keep on v0.38.x
 replace github.com/cometbft/cometbft => github.com/cometbft/cometbft v0.38.12
+
+replace zk-age-verify/zk => ../zk

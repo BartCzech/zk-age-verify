@@ -22,18 +22,22 @@ rm -rf "$HOME_DIR"
 echo "==> Initialising chain (home: $HOME_DIR)"
 ageverifyd init "$MONIKER" --chain-id "$CHAIN_ID"
 
-echo "==> Creating test accounts (alice + bob)"
-ageverifyd keys add alice $KEYRING
-ageverifyd keys add bob   $KEYRING
+echo "==> Creating test accounts (alice = validator, bob = adult user, charlie = minor)"
+ageverifyd keys add alice   $KEYRING
+ageverifyd keys add bob     $KEYRING
+ageverifyd keys add charlie $KEYRING
 
-ALICE=$(ageverifyd keys show alice -a $KEYRING)
-BOB=$(ageverifyd keys show bob   -a $KEYRING)
-echo "    alice: $ALICE"
-echo "    bob:   $BOB"
+ALICE=$(ageverifyd keys show alice   -a $KEYRING)
+BOB=$(ageverifyd keys show bob     -a $KEYRING)
+CHARLIE=$(ageverifyd keys show charlie -a $KEYRING)
+echo "    alice (validator): $ALICE"
+echo "    bob   (adult user): $BOB"
+echo "    charlie (minor):    $CHARLIE"
 
 echo "==> Funding genesis accounts"
-ageverifyd genesis add-genesis-account "$ALICE" 100000000stake $KEYRING
-ageverifyd genesis add-genesis-account "$BOB"   100000000stake $KEYRING
+ageverifyd genesis add-genesis-account "$ALICE"   100000000stake $KEYRING
+ageverifyd genesis add-genesis-account "$BOB"     100000000stake $KEYRING
+ageverifyd genesis add-genesis-account "$CHARLIE" 100000000stake $KEYRING
 
 echo "==> Creating genesis validator transaction (alice self-delegates 10 000 000 stake)"
 ageverifyd genesis gentx alice 10000000stake \

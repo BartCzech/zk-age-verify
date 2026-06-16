@@ -24,6 +24,12 @@ NODE = "tcp://localhost:26657"          # same node, for the CLI
 KEYRING = ["--keyring-backend", "test"]
 WORKDIR = "/workspace"                  # repo root inside the container
 
+# When True, every external call prints the exact command being run and the
+# raw response it got back. This is the "prove it's real" switch: flip it on
+# for a live demo / Q&A so the audience sees the actual ageverifyd calls and
+# the node's real JSON; flip it off for clean slide screenshots.
+SHOW_COMMANDS = True
+
 # Pretty printing
 _G, _R, _Y, _C, _D, _N = (
     "\033[0;32m", "\033[0;31m", "\033[1;33m", "\033[0;36m", "\033[0;90m", "\033[0m",
@@ -60,9 +66,35 @@ def banner(title):
     print(f"{_C}╚{line}╝{_N}")
 
 
+# Verbose-mode plumbing: print the real command + raw response
+def _trunc(arg, limit=28):
+    """Shorten long base64 blobs (proof/witness) so the command stays readable
+    while still showing it is a real argument."""
+    s = str(arg)
+    if len(s) > limit:
+        return f"{s[:18]}…<{len(s)} chars>"
+    return s
+
+
+def _show_cmd(args):
+    if SHOW_COMMANDS:
+        print(f"   {_D}$ {' '.join(_trunc(a) for a in args)}{_N}")
+
+
+def _show_resp(obj):
+    """Print a raw response (dict or str), dimmed, so the audience sees the
+    node's actual JSON rather than just our narration."""
+    if not SHOW_COMMANDS:
+        return
+    text = obj if isinstance(obj, str) else json.dumps(obj, indent=2)
+    for line in text.splitlines():
+        print(f"   {_D}│ {line}{_N}")
+
+
 # Subprocess + RPC plumbing
 def run(args, check=True):
     """Run a command in the repo root and capture stdout/stderr."""
+    _show_cmd(args)
     proc = subprocess.run(
         args, cwd=WORKDIR, capture_output=True, text=True
     )
@@ -75,15 +107,20 @@ def ageverifyd(*args, check=True):
     return run(["ageverifyd", *args], check=check)
 
 
-def rpc(path):
-    """GET a CometBFT RPC endpoint and parse the JSON response."""
+def rpc(path, quiet=False):
+    """GET a CometBFT RPC endpoint and parse the JSON response.
+
+    `quiet=True` suppresses the printed command — used by polling loops so
+    they don't spam the same curl line dozens of times."""
+    if not quiet:
+        _show_cmd(["curl", "-s", RPC + path])
     with urllib.request.urlopen(RPC + path, timeout=5) as resp:
         return json.loads(resp.read().decode())
 
 
 def require_chain_live():
     try:
-        rpc("/status")
+        rpc("/status", quiet=True)
     except Exception:
         fail(f"Chain not reachable at {RPC}. Start it with:\n"
              f"   ageverifyd start --minimum-gas-prices 0stake")
@@ -99,11 +136,19 @@ def wait_for_tx(txhash, timeout=25):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            res = rpc(f"/tx?hash=0x{txhash}")
+            res = rpc(f"/tx?hash=0x{txhash}", quiet=True)
             if "result" in res:
                 r = res["result"]
-                r["tx_result"]["height"] = r.get("height")
-                return r["tx_result"]
+                tx_result = r["tx_result"]
+                tx_result["height"] = r.get("height")
+                _show_cmd(["curl", "-s", f"{RPC}/tx?hash=0x{txhash}"])
+                _show_resp({
+                    "height": tx_result.get("height"),
+                    "code": tx_result.get("code", 0),
+                    "gas_used": tx_result.get("gas_used"),
+                    "log": tx_result.get("log", ""),
+                })
+                return tx_result
         except Exception:
             pass  # not committed yet — keep polling
         time.sleep(1)
@@ -155,9 +200,13 @@ def _submit(account, proof_b64, witness_b64, date):
         check=False,
     )
     try:
-        return json.loads(proc.stdout)
+        result = json.loads(proc.stdout)
     except json.JSONDecodeError:
         fail(f"could not parse broadcast response:\n{proc.stdout}\n{proc.stderr}")
+    _show_resp({"txhash": result.get("txhash"),
+                "code": result.get("code", 0),
+                "raw_log": result.get("raw_log", "")})
+    return result
 
 
 def query_status(address):
@@ -167,9 +216,11 @@ def query_status(address):
         "--node", NODE, "--output", "json", check=False,
     )
     try:
-        return json.loads(proc.stdout)
+        result = json.loads(proc.stdout)
     except json.JSONDecodeError:
         return {"verified": False, "verified_at": ""}
+    _show_resp(result)
+    return result
 
 
 def find_event(tx_result, event_type):

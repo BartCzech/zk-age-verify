@@ -53,17 +53,31 @@ There are two narrated Python demos (`demo/`), each telling a different story
 and printing the blockchain concept at every step. Only the values at the top
 of each file (birth date, account) are meant to be tweaked.
 
-**`demo/demo_positive.py`** — an adult (born 2000) walks the full lifecycle:
+Three identities are created by `scripts/init-chain.sh`, to keep the roles
+distinct (a key blockchain idea — validators and users are different parties):
+
+| Account   | Role                                                   |
+| --------- | ------------------------------------------------------ |
+| `alice`   | the **validator** — runs the node, produces blocks     |
+| `bob`     | an ordinary **adult user** (positive demo)             |
+| `charlie` | a **minor** who tries (and fails) to cheat (negative)  |
+
+Verbose mode: `chainlib.py` has a `SHOW_COMMANDS = True` toggle at the top. When
+on (the default), every step prints the exact `ageverifyd`/`curl` command and the
+node's raw JSON response — flip it off for clean slide screenshots.
+
+**`demo/demo_positive.py`** — an adult (`bob`, born 2000) walks the full lifecycle:
 
 1. **Connect** to the live chain (height, block time)
-2. **Account** — the bech32 identity signing the tx
-3. **Generate the ZK proof locally** — birth date never leaves the machine
-4. **Sign & broadcast** the transaction
-5. **Wait for block inclusion** — mempool acceptance ≠ finality
-6. **On-chain verification** — every validator re-runs Groth16; `age_verified` event emitted
-7. **Query world state** → `verified: true`
+2. **Account** — `bob` the user, distinct from `alice` the validator
+3. **World state BEFORE** → `verified: false`
+4. **Generate the ZK proof locally** — birth date never leaves the machine
+5. **Sign & broadcast** the transaction
+6. **Wait for block inclusion** — mempool acceptance ≠ finality
+7. **On-chain verification** — every validator re-runs Groth16; `age_verified` event emitted
+8. **World state AFTER** → `verified: true` (same query as step 3, now flipped)
 
-**`demo/demo_negative.py`** — a minor (born 2015) cannot get verified, even by cheating:
+**`demo/demo_negative.py`** — a minor (`charlie`, born 2015) cannot get verified, even by cheating:
 
 - **N1** Honest attempt → the prover *refuses* (a false statement can't be proven)
 - **N2** Forged `MinAge=0` proof → included in a block but execution **fails** (code `1103`)
@@ -96,7 +110,7 @@ WITNESS=$(jq -r .public_witness /tmp/proof.json)
 DATE=$(jq -r .current_date /tmp/proof.json)
 
 ageverifyd tx ageverify submit-age-proof "$PROOF" "$WITNESS" "$DATE" \
-    --from alice --keyring-backend test \
+    --from bob --keyring-backend test \
     --chain-id ageverify \
     --node tcp://localhost:26657 \
     --broadcast-mode sync \
@@ -104,7 +118,7 @@ ageverifyd tx ageverify submit-age-proof "$PROOF" "$WITNESS" "$DATE" \
 
 # Query verification status
 ageverifyd query ageverify verification-status \
-    $(ageverifyd keys show alice -a --keyring-backend test) \
+    $(ageverifyd keys show bob -a --keyring-backend test) \
     --node tcp://localhost:26657 --output json
 ```
 
